@@ -1,0 +1,141 @@
+# ============================================================
+# CELL 0 — Setup. Run this first, in every session.
+# ============================================================
+!pip install -q xgboost
+
+import pandas as pd
+import numpy as np
+import xgboost as xgb
+print("XGBoost version:", xgb.__version__)
+
+from io import StringIO
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.svm import SVR
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import (LeaveOneOut, KFold, GridSearchCV,
+                                      cross_val_predict)
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+import warnings
+warnings.filterwarnings("ignore")
+
+RANDOM_STATE = 42
+
+# The corrected 108-row dataset
+CSV_DATA = """Sno,Material,Speed,Feed,Depth of cut,Surface roughness,Material_name
+1,1,90.0,0.1,0.5,0.79,Delrin
+2,1,90.0,0.1,1.0,0.61,Delrin
+3,1,90.0,0.1,1.5,0.56,Delrin
+4,1,90.0,0.3,0.5,1.88,Delrin
+5,1,90.0,0.3,1.0,1.78,Delrin
+6,1,90.0,0.3,1.5,1.74,Delrin
+7,1,90.0,0.5,0.5,1.67,Delrin
+8,1,90.0,0.5,1.0,1.59,Delrin
+9,1,90.0,0.5,1.5,1.65,Delrin
+10,1,135.0,0.1,0.5,1.18,Delrin
+11,1,135.0,0.1,1.5,0.84,Delrin
+12,1,135.0,0.1,1.0,0.66,Delrin
+13,1,135.0,0.3,0.5,1.6,Delrin
+14,1,135.0,0.3,1.5,1.72,Delrin
+15,1,135.0,0.3,1.0,1.66,Delrin
+16,1,135.0,0.5,0.5,1.5,Delrin
+17,1,135.0,0.5,1.5,1.8,Delrin
+18,1,135.0,0.5,1.0,1.43,Delrin
+19,1,180.0,0.1,0.5,1.19,Delrin
+20,1,180.0,0.1,1.5,0.89,Delrin
+21,1,180.0,0.1,1.0,0.67,Delrin
+22,1,180.0,0.3,0.5,1.62,Delrin
+23,1,180.0,0.3,1.5,1.65,Delrin
+24,1,180.0,0.3,1.0,1.6,Delrin
+25,1,180.0,0.5,0.5,1.42,Delrin
+26,1,180.0,0.5,1.5,1.61,Delrin
+27,1,180.0,0.5,1.0,1.59,Delrin
+28,2,95.0,0.2,0.25,1.156,PEEK
+29,2,95.0,0.2,0.5,1.193,PEEK
+30,2,95.0,0.2,0.75,1.446,PEEK
+31,2,95.0,0.4,0.25,4.57,PEEK
+32,2,95.0,0.4,0.5,5.29,PEEK
+33,2,95.0,0.4,0.75,5.37,PEEK
+34,2,95.0,0.6,0.25,6.09,PEEK
+35,2,95.0,0.6,0.5,8.14,PEEK
+36,2,95.0,0.6,0.75,8.47,PEEK
+37,2,125.0,0.2,0.25,1.203,PEEK
+38,2,125.0,0.2,0.5,1.15,PEEK
+39,2,125.0,0.2,0.75,1.5,PEEK
+40,2,125.0,0.4,0.25,4.51,PEEK
+41,2,125.0,0.4,0.5,4.83,PEEK
+42,2,125.0,0.4,0.75,6.293,PEEK
+43,2,125.0,0.6,0.25,7.16,PEEK
+44,2,125.0,0.6,0.5,8.18,PEEK
+45,2,125.0,0.6,0.75,8.74,PEEK
+46,2,155.0,0.2,0.25,1.02,PEEK
+47,2,155.0,0.2,0.5,1.126,PEEK
+48,2,155.0,0.2,0.75,1.24,PEEK
+49,2,155.0,0.4,0.25,4.6,PEEK
+50,2,155.0,0.4,0.5,4.41,PEEK
+51,2,155.0,0.4,0.75,5.21,PEEK
+52,2,155.0,0.6,0.25,6.38,PEEK
+53,2,155.0,0.6,0.5,8.32,PEEK
+54,2,155.0,0.6,0.75,8.72,PEEK
+55,3,80.0,0.1,0.5,1.48,PTFE
+56,3,80.0,0.1,0.75,1.75,PTFE
+57,3,80.0,0.1,1.0,1.37,PTFE
+58,3,80.0,0.3,0.5,1.76,PTFE
+59,3,80.0,0.3,0.75,2.88,PTFE
+60,3,80.0,0.3,1.0,2.66,PTFE
+61,3,80.0,0.5,0.5,2.15,PTFE
+62,3,80.0,0.5,0.75,2.988,PTFE
+63,3,80.0,0.5,1.0,2.897,PTFE
+64,3,120.0,0.1,0.5,2.24,PTFE
+65,3,120.0,0.1,0.75,2.678,PTFE
+66,3,120.0,0.1,1.0,2.07,PTFE
+67,3,120.0,0.3,0.5,2.825,PTFE
+68,3,120.0,0.3,0.75,3.41,PTFE
+69,3,120.0,0.3,1.0,3.115,PTFE
+70,3,120.0,0.5,0.5,2.17,PTFE
+71,3,120.0,0.5,0.75,3.03,PTFE
+72,3,120.0,0.5,1.0,2.897,PTFE
+73,3,160.0,0.1,0.5,2.362,PTFE
+74,3,160.0,0.1,0.75,2.92,PTFE
+75,3,160.0,0.1,1.0,2.31,PTFE
+76,3,160.0,0.3,0.5,2.511,PTFE
+77,3,160.0,0.3,0.75,3.11,PTFE
+78,3,160.0,0.3,1.0,2.785,PTFE
+79,3,160.0,0.5,0.5,1.47,PTFE
+80,3,160.0,0.5,0.75,2.24,PTFE
+81,3,160.0,0.5,1.0,2.15,PTFE
+82,4,23.6,0.15,0.2,0.84,Nano-PEEK
+83,4,23.6,0.15,1.0,0.92,Nano-PEEK
+84,4,23.6,0.15,1.8,1.02,Nano-PEEK
+85,4,23.6,0.45,0.2,1.24,Nano-PEEK
+86,4,23.6,0.45,1.0,0.99,Nano-PEEK
+87,4,23.6,0.45,1.8,1.42,Nano-PEEK
+88,4,23.6,0.75,0.2,1.93,Nano-PEEK
+89,4,23.6,0.75,1.0,2.22,Nano-PEEK
+90,4,23.6,0.75,1.8,2.32,Nano-PEEK
+91,4,47.1,0.15,0.2,0.83,Nano-PEEK
+92,4,47.1,0.15,1.0,0.88,Nano-PEEK
+93,4,47.1,0.15,1.8,1.04,Nano-PEEK
+94,4,47.1,0.45,0.2,1.84,Nano-PEEK
+95,4,47.1,0.45,1.0,1.69,Nano-PEEK
+96,4,47.1,0.45,1.8,2.06,Nano-PEEK
+97,4,47.1,0.75,0.2,2.3,Nano-PEEK
+98,4,47.1,0.75,1.0,2.43,Nano-PEEK
+99,4,47.1,0.75,1.8,2.66,Nano-PEEK
+100,4,70.7,0.15,0.2,0.85,Nano-PEEK
+101,4,70.7,0.15,1.0,0.88,Nano-PEEK
+102,4,70.7,0.15,1.8,1.0,Nano-PEEK
+103,4,70.7,0.45,0.2,1.45,Nano-PEEK
+104,4,70.7,0.45,1.0,1.51,Nano-PEEK
+105,4,70.7,0.45,1.8,1.68,Nano-PEEK
+106,4,70.7,0.75,0.2,2.15,Nano-PEEK
+107,4,70.7,0.75,1.0,2.26,Nano-PEEK
+108,4,70.7,0.75,1.8,2.47,Nano-PEEK
+"""
+
+df = pd.read_csv(StringIO(CSV_DATA))
+FEATURES = ["Speed", "Feed", "Depth of cut"]
+materials = ["Delrin", "PEEK", "PTFE", "Nano-PEEK"]  # Nano-PEEK = PEEK/MWCNT
+print(df.shape)
+print(df.groupby("Material_name")["Surface roughness"].agg(["min", "max", "count"]))
